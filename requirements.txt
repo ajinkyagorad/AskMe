@@ -1,0 +1,4 @@
+openai
+pydub
+gtts
+google-cloud-speech
