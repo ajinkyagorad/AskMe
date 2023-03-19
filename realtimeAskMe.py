@@ -1,32 +1,99 @@
-import sounddevice as sd
 import numpy as np
 import queue
 import threading
 import time
 import openai
+import whisper
 import soundfile as sf
 import io
 from gtts import gTTS
 from pydub import AudioSegment
 from pydub.playback import play
 from time import time
+import sounddevice as sd
+import os
+from playsound import playsound
+import simpleaudio
+import struct
+import boto3
+from textblob import TextBlob
 
-openai.api_key = <openai-key>
+
+# AWS access keys
+aws_access_key_id = 
+aws_secret_access_key = 
+# OpenAI api key
+openai.api_key = 
+
+# AWS region name
+region_name = 
+
+# Create a client session
+session = boto3.Session(
+    aws_access_key_id=aws_access_key_id,
+    aws_secret_access_key=aws_secret_access_key,
+    region_name=region_name
+)
+
+# Create a Polly client
+polly_client = session.client('polly')
+comprehend = session.client('comprehend')
+
 q = queue.Queue()
 samplerate = 44100
 recording_duration = 50 # timeout (sec)
 inactive_time_limit = .5 # when person pauses for this time or more (sec)
 recording_blocks = []
-dirpath = '/home/pi/Desktop/AskMe/'
+dirpath = r''
+
+valid_language_codes = ['en-US', 'en-IN', 'es-MX', 'en-ZA', 'tr-TR', 'ru-RU', 'ro-RO', 'pt-PT', 'pl-PL', 'nl-NL', 'it-IT', 'is-IS', 'fr-FR', 'es-ES', 'de-DE', 'yue-CN', 'ko-KR', 'en-NZ', 'en-GB-WLS', 'hi-IN', 'arb', 'cy-GB', 'cmn-CN', 'da-DK', 'en-AU', 'pt-BR', 'nb-NO', 'sv-SE', 'ja-JP', 'es-US', 'ca-ES', 'fr-CA', 'en-GB', 'de-AT']
+
 def audio_callback(indata, frames, time, status):
     q.put(indata.copy())
+        
+def text_to_speech_aws(text):
+    response = comprehend.detect_dominant_language(Text=text)
+
+    # extract language code
+    language_code = response['Languages'][0]['LanguageCode']
+    language_code = language_code+'-'+language_code.upper()
+    
+
+    if language_code not in valid_language_codes:
+        language_code = valid_language_codes[0] 
+
+    # Generate an MP3 file using Polly
+    print('detected as:', language_code)
+    response = polly_client.synthesize_speech(
+        Text=text,
+        OutputFormat='mp3',
+        VoiceId='Joanna',
+        LanguageCode=language_code
+    )
+    ofile = os.path.join(dirpath, 'output.mp3')
+    # Save the MP3 file to disk
+    with open(ofile, 'wb') as file:
+        file.write(response['AudioStream'].read())
+    sound = AudioSegment.from_mp3(ofile)
+    sound.export('output.wav', format="wav")
+    obj = simpleaudio.WaveObject.from_wave_file('output.wav')
+    pobj = obj.play()
+    pobj.wait_done()
 
 def text_to_speech(text):
     tts = gTTS(text, lang="en", slow=False)
-    tts.save(dirpath+"output.mp3")
-
-    audio_file = AudioSegment.from_file(dirpath+"output.mp3", format="mp3")
-    play(audio_file)
+    #fp = io.BytesIO()
+    ofile = os.path.join(dirpath, 'output.mp3')
+    tts.save(ofile)
+    sound = AudioSegment.from_mp3(ofile)
+    sound.export('output.wav', format="wav")
+    obj = simpleaudio.WaveObject.from_wave_file('output.wav')
+    pobj = obj.play()
+    pobj.wait_done()
+    #print('filepath: ',os.path.join(dirpath, 'output.mp3')) 
+    
+    #audio_file = AudioSegment.from_file('output.mp3', format="mp3")
+    #play(audio_file)
 def process_audio():
     while True:
         recording_blocks = []
@@ -45,23 +112,26 @@ def process_audio():
                 break
         print('done')
         audio_data_concat = np.concatenate(recording_blocks, axis=0)
-        # only proceed if at least 1 second of audio is present else redo
+        # only proceed if at least 1 second of audio is present and there is at least 50% audio else redo
         if time()-start_time<1:
             print('too short')
             continue
+        val=np.sum(audio_data_concat>0.005)/len(audio_data_concat)
+        if val<.05:
+            print('too little audio :', val)
+            continue
 
-        sf.write(dirpath+'input.wav', audio_data_concat, samplerate)
-        with open(dirpath+'input.wav', 'rb') as f:
+        sf.write(os.path.join(dirpath, 'input.wav'), audio_data_concat, samplerate)
+        with open(os.path.join(dirpath, 'input.wav'), 'rb') as f:
             transcript = openai.Audio.transcribe("whisper-1", f)['text']
-            print('input: ',transcript)
-        response = openai.Completion.create(engine="text-davinci-002", prompt=transcript, max_tokens=100, n=1, stop=None, temperature=0.7)
+            print('Input: ',transcript)
+        response = openai.Completion.create(engine="text-davinci-003", prompt=transcript, max_tokens=50, n=1, stop=None, temperature=0.7)
         message = response.choices[0].text.strip()
         if transcript:
-            print("Detected speech:", transcript)
             print("Response:", message)
-            text_to_speech(message)
+            text_to_speech_aws(message)
 
-stream = sd.InputStream(device = 10, callback=audio_callback)
+stream = sd.InputStream(device = 0, callback=audio_callback)
 outstream=sd.OutputStream(samplerate=samplerate)
 stream.start()
 outstream.start()
