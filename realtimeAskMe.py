@@ -19,14 +19,14 @@ import boto3
 from textblob import TextBlob
 
 
-# AWS access keys
-aws_access_key_id = 
-aws_secret_access_key = 
+# AWS access keys (incomplete and are temporary) hint AKvSAG
+aws_access_key_id = 'IA3ZOK3GYW2647Q54M'
+aws_secret_access_key = 'gKMsBFkYBzlJS/XKqC8idobl6b/jJKkeiX8xmk'
 # OpenAI api key
-openai.api_key = 
+openai.api_key = 'sk-aalWvYCWi0oiYffnsk5WT3BlbkFJn2snshVgPGXwlG3Hn9'  
 
 # AWS region name
-region_name = 
+region_name = 'eu-central-1'
 
 # Create a client session
 session = boto3.Session(
