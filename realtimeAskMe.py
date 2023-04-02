@@ -24,12 +24,6 @@ import requests
 from PIL import Image
 # pyttsx3
 
-# Initialize the engine
-engine = pyttsx3.init()
-
-# Set the voice property to a female voice
-voices = engine.getProperty('voices')
-engine.setProperty('voice', voices[1].id) # index 1 corresponds to a female voice
 
 # AWS access keys (incomplete and are temporary) hint AKvSAG
 aws_access_key_id = 'IA3ZOK3GYW2647Q54M'
@@ -64,7 +58,7 @@ def draw_image(prompt):
     response = openai.Image.create(
                 prompt=prompt,
                 n=1,
-                size="1024x1024"
+                size="512x512"
             )
     print('submitted request.. waiting')
     image_url = response['data'][0]['url']
@@ -74,13 +68,23 @@ def draw_image(prompt):
     image = Image.open(BytesIO(response.content))
     #cv2.namedWindow('imgen',  cv2.WINDOW_KEEPRATIO )
     cv2.imshow('imgen',np.array(image))
-    cv2.waitKey(0)
+    cv2.waitKey(5000)
+    cv2.destroyAllWindows()
 
 def audio_callback(indata, frames, time, status):
     q.put(indata.copy())
 def text_to_speech_offline(text):
-    pyttsx3.speak(text)
+    # Initialize the engine
+    engine = pyttsx3.init()
 
+    # Set the voice property to a female voice
+    voices = engine.getProperty('voices')
+    engine.setProperty('voice', voices[1].id) # index 1 corresponds to a female voice
+    engine.say(text)
+
+    # Run the engine and wait until speech is complete
+    engine.runAndWait()
+    print('¤')
 def text_to_speech_aws(text):
     response = comprehend.detect_dominant_language(Text=text)
 
@@ -161,12 +165,14 @@ def process_audio():
             print('Input: ',transcript)
         if transcript.split(' ')[0].upper() == 'DRAW':
             draw_image(transcript)
-        response = openai.Completion.create(engine="text-davinci-003", prompt=transcript, max_tokens=len(transcript)*2, n=1, stop=None, temperature=0.7)
-        message = response.choices[0].text.strip()
-        if transcript:
-            print("Response:", message)
-            #text_to_speech_aws(message)
-            text_to_speech_offline(message)
+        elif transcript:
+            response = openai.Completion.create(engine="text-davinci-003", prompt=transcript, max_tokens=50, n=1, stop='None', temperature=0.7)
+            message = response.choices[0].text.strip()
+            if message:
+                print("Response:", message)
+                #text_to_speech_aws(message)
+                text_to_speech_offline(message)
+                
 
 stream = sd.InputStream(device = 0, callback=audio_callback)
 #outstream=sd.OutputStream(samplerate=samplerate)
