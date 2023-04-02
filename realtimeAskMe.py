@@ -17,7 +17,19 @@ import simpleaudio
 import struct
 import boto3
 from textblob import TextBlob
+import cv2
+import pyttsx3
+from io import BytesIO
+import requests
+from PIL import Image
+# pyttsx3
 
+# Initialize the engine
+engine = pyttsx3.init()
+
+# Set the voice property to a female voice
+voices = engine.getProperty('voices')
+engine.setProperty('voice', voices[1].id) # index 1 corresponds to a female voice
 
 # AWS access keys (incomplete and are temporary) hint AKvSAG
 aws_access_key_id = 'IA3ZOK3GYW2647Q54M'
@@ -47,10 +59,28 @@ recording_blocks = []
 dirpath = r''
 
 valid_language_codes = ['en-US', 'en-IN', 'es-MX', 'en-ZA', 'tr-TR', 'ru-RU', 'ro-RO', 'pt-PT', 'pl-PL', 'nl-NL', 'it-IT', 'is-IS', 'fr-FR', 'es-ES', 'de-DE', 'yue-CN', 'ko-KR', 'en-NZ', 'en-GB-WLS', 'hi-IN', 'arb', 'cy-GB', 'cmn-CN', 'da-DK', 'en-AU', 'pt-BR', 'nb-NO', 'sv-SE', 'ja-JP', 'es-US', 'ca-ES', 'fr-CA', 'en-GB', 'de-AT']
+def draw_image(prompt):
+    
+    response = openai.Image.create(
+                prompt=prompt,
+                n=1,
+                size="1024x1024"
+            )
+    print('submitted request.. waiting')
+    image_url = response['data'][0]['url']
+    response = requests.get(image_url)
+    print('response at: ', image_url)
+    # Open the response content as an image using Pillow
+    image = Image.open(BytesIO(response.content))
+    #cv2.namedWindow('imgen',  cv2.WINDOW_KEEPRATIO )
+    cv2.imshow('imgen',np.array(image))
+    cv2.waitKey(0)
 
 def audio_callback(indata, frames, time, status):
     q.put(indata.copy())
-        
+def text_to_speech_offline(text):
+    pyttsx3.speak(text)
+
 def text_to_speech_aws(text):
     response = comprehend.detect_dominant_language(Text=text)
 
@@ -74,11 +104,15 @@ def text_to_speech_aws(text):
     # Save the MP3 file to disk
     with open(ofile, 'wb') as file:
         file.write(response['AudioStream'].read())
+    
+    playsound('output.mp3')
+    '''
     sound = AudioSegment.from_mp3(ofile)
     sound.export('output.wav', format="wav")
     obj = simpleaudio.WaveObject.from_wave_file('output.wav')
     pobj = obj.play()
     pobj.wait_done()
+    '''
 
 def text_to_speech(text):
     tts = gTTS(text, lang="en", slow=False)
@@ -125,16 +159,19 @@ def process_audio():
         with open(os.path.join(dirpath, 'input.wav'), 'rb') as f:
             transcript = openai.Audio.transcribe("whisper-1", f)['text']
             print('Input: ',transcript)
-        response = openai.Completion.create(engine="text-davinci-003", prompt=transcript, max_tokens=50, n=1, stop=None, temperature=0.7)
+        if transcript.split(' ')[0].upper() == 'DRAW':
+            draw_image(transcript)
+        response = openai.Completion.create(engine="text-davinci-003", prompt=transcript, max_tokens=len(transcript)*2, n=1, stop=None, temperature=0.7)
         message = response.choices[0].text.strip()
         if transcript:
             print("Response:", message)
-            text_to_speech_aws(message)
+            #text_to_speech_aws(message)
+            text_to_speech_offline(message)
 
 stream = sd.InputStream(device = 0, callback=audio_callback)
-outstream=sd.OutputStream(samplerate=samplerate)
+#outstream=sd.OutputStream(samplerate=samplerate)
 stream.start()
-outstream.start()
+#outstream.start()
 
 processing_thread = threading.Thread(target=process_audio)
 processing_thread.start()
