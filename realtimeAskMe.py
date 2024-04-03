@@ -2,7 +2,8 @@ import numpy as np
 import queue
 import threading
 import time
-import openai
+import cv2
+from openai import OpenAI
 import whisper
 import soundfile as sf
 import io
@@ -17,19 +18,17 @@ import simpleaudio
 import struct
 import boto3
 from textblob import TextBlob
-import cv2
-import pyttsx3
+import pygame
+
+from PIL import Image
 from io import BytesIO
 import requests
-from PIL import Image
-# pyttsx3
 
 
-# AWS access keys (incomplete and are temporary) hint AKvSAG
-aws_access_key_id = 'IA3ZOK3GYW2647Q54M'
-aws_secret_access_key = 'gKMsBFkYBzlJS/XKqC8idobl6b/jJKkeiX8xmk'
-# OpenAI api key
-openai.api_key = 'sk-aalWvYCWi0oiYffnsk5WT3BlbkFJn2snshVgPGXwlG3Hn9'  
+# AWS access keys (incomplete and are temporary) hint 
+aws_access_key_id = ''
+aws_secret_access_key = ''
+client = OpenAI() #key in environment variable
 
 # AWS region name
 region_name = 'eu-central-1'
@@ -44,48 +43,54 @@ session = boto3.Session(
 # Create a Polly client
 polly_client = session.client('polly')
 comprehend = session.client('comprehend')
+pygame.init()
+pygame.mixer.init()
 
+
+system_message =  ""
 q = queue.Queue()
 samplerate = 44100
 recording_duration = 50 # timeout (sec)
 inactive_time_limit = .5 # when person pauses for this time or more (sec)
 recording_blocks = []
-dirpath = r''
+dirpath = os.path.abspath(os.path.dirname(__file__))
 
 valid_language_codes = ['en-US', 'en-IN', 'es-MX', 'en-ZA', 'tr-TR', 'ru-RU', 'ro-RO', 'pt-PT', 'pl-PL', 'nl-NL', 'it-IT', 'is-IS', 'fr-FR', 'es-ES', 'de-DE', 'yue-CN', 'ko-KR', 'en-NZ', 'en-GB-WLS', 'hi-IN', 'arb', 'cy-GB', 'cmn-CN', 'da-DK', 'en-AU', 'pt-BR', 'nb-NO', 'sv-SE', 'ja-JP', 'es-US', 'ca-ES', 'fr-CA', 'en-GB', 'de-AT']
-def draw_image(prompt):
-    
-    response = openai.Image.create(
-                prompt=prompt,
-                n=1,
-                size="512x512"
-            )
-    print('submitted request.. waiting')
-    image_url = response['data'][0]['url']
-    response = requests.get(image_url)
-    print('response at: ', image_url)
-    # Open the response content as an image using Pillow
-    image = Image.open(BytesIO(response.content))
-    #cv2.namedWindow('imgen',  cv2.WINDOW_KEEPRATIO )
-    cv2.imshow('imgen',np.array(image))
-    cv2.waitKey(5000)
-    cv2.destroyAllWindows()
 
 def audio_callback(indata, frames, time, status):
     q.put(indata.copy())
-def text_to_speech_offline(text):
-    # Initialize the engine
-    engine = pyttsx3.init()
-
-    # Set the voice property to a female voice
-    voices = engine.getProperty('voices')
-    engine.setProperty('voice', voices[1].id) # index 1 corresponds to a female voice
-    engine.say(text)
-
-    # Run the engine and wait until speech is complete
-    engine.runAndWait()
-    print('¤')
 def text_to_speech_aws(text):
+    response = comprehend.detect_dominant_language(Text=text)
+
+    # extract language code
+    language_code = response['Languages'][0]['LanguageCode']
+    language_code = language_code+'-'+language_code.upper()
+    
+
+    if language_code not in valid_language_codes:
+        language_code = valid_language_codes[0] 
+
+    # Generate an MP3 file using Polly
+    print('detected as:', language_code)
+    response = polly_client.synthesize_speech(
+        Text=text,
+        OutputFormat='mp3',
+        VoiceId='Joanna',
+        LanguageCode=language_code
+    )
+    ofile = os.path.join(dirpath, 'output.mp3')
+    # Save the MP3 file to disk
+    pygame.mixer.music.unload() 
+
+    try:
+        with open(ofile, 'wb') as file:
+            file.write(response['AudioStream'].read())
+    except Exception as e:
+        print(f"Error saving file: {e}")
+
+    print('##')
+    play_mp3(ofile)     
+def text_to_speech_aws2(text):
     response = comprehend.detect_dominant_language(Text=text)
 
     # extract language code
@@ -108,21 +113,66 @@ def text_to_speech_aws(text):
     # Save the MP3 file to disk
     with open(ofile, 'wb') as file:
         file.write(response['AudioStream'].read())
-    
-    playsound('output.mp3')
-    '''
+    ofile = ofile.replace('\\', '\\\\')
+    print(ofile)
     sound = AudioSegment.from_mp3(ofile)
     sound.export('output.wav', format="wav")
     obj = simpleaudio.WaveObject.from_wave_file('output.wav')
     pobj = obj.play()
     pobj.wait_done()
-    '''
+
+def play_mp3(file_path, speed=1.0):
+    
+    pygame.mixer.music.load(file_path)
+    pygame.mixer.music.play()
+  
 
 def text_to_speech(text):
+    tts = gTTS(text, lang="en", slow=False)
+    ofile = os.path.join(dirpath, 'output.mp3')
+    pygame.mixer.music.unload() 
+
+    try:
+        tts.save(ofile)
+    except Exception as e:
+        print(f"Error saving file: {e}")
+
+    print('##')
+    play_mp3(ofile)
+
+
+def draw_image(prompt):
+    response = client.images.generate(
+        model="dall-e-3",
+        prompt=prompt,
+        size="1024x1024",
+        quality="standard",
+        n=1,
+    )
+    print('submitted request with prompt:',prompt,' ... waiting')
+    # Adjusted to match the new response structure
+    image_url = response.data[0].url
+    response = requests.get(image_url)
+    print('response at: ', image_url)
+    
+    # Open the response content as an image using Pillow
+    image = Image.open(BytesIO(response.content))
+    # Convert the image to an array format that OpenCV can work with
+    image_array = np.array(image)
+    # OpenCV expects colors in BGR format, whereas Pillow provides them in RGB.
+    # Convert from RGB to BGR format
+    image_array = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+    
+    cv2.imshow('Generated Image', image_array)
+    cv2.waitKey(5000)  # Display the window for 5 seconds
+    cv2.destroyAllWindows()
+
+def text_to_speech2(text):
     tts = gTTS(text, lang="en", slow=False)
     #fp = io.BytesIO()
     ofile = os.path.join(dirpath, 'output.mp3')
     tts.save(ofile)
+    print(ofile)
     sound = AudioSegment.from_mp3(ofile)
     sound.export('output.wav', format="wav")
     obj = simpleaudio.WaveObject.from_wave_file('output.wav')
@@ -158,26 +208,63 @@ def process_audio():
         if val<.05:
             print('too little audio :', val)
             continue
+        try:
+            sf.write(os.path.join(dirpath, 'input.wav'), audio_data_concat, samplerate)
+            print('saved.')
+        except Exception as e:
+            print(f"Error saving audio: {e}")
 
-        sf.write(os.path.join(dirpath, 'input.wav'), audio_data_concat, samplerate)
-        with open(os.path.join(dirpath, 'input.wav'), 'rb') as f:
-            transcript = openai.Audio.transcribe("whisper-1", f)['text']
-            print('Input: ',transcript)
+        
+        # Correctly use the OpenAI API for transcribing an audio file
+        with open(os.path.join(dirpath, 'input.wav'), 'rb') as audio_file:
+            #print('Trying to transcribe...')
+            transcription = client.audio.transcriptions.create(
+            model="whisper-1", 
+            file=audio_file
+            )
+            print('Input:', transcription.text)
+            transcript = transcription.text
+
+        
+        # Checks if the first word of the transcript is "DRAW", which triggers the drawing function.
         if transcript.split(' ')[0].upper() == 'DRAW':
             draw_image(transcript)
-        elif transcript:
-            response = openai.Completion.create(engine="text-davinci-003", prompt=transcript, max_tokens=50, n=1, stop='None', temperature=0.7)
-            message = response.choices[0].text.strip()
-            if message:
-                print("Response:", message)
-                #text_to_speech_aws(message)
-                text_to_speech_offline(message)
-                
+
+        # Checks if the first word of the transcript is "QUIT", which exits the program.
+        elif transcript.strip().upper().split(' ')[0] == 'QUIT':
+            exit()
+
+        # Checks if the first word of the transcript is "SYSTEM", which updates the system role dynamically.
+        elif transcript.upper().startswith('SYSTEM'):
+            # Extracts the new role description after "SYSTEM"
+            new_role_description = ' '.join(transcript.split(' ')[1:])
+            system_message = f"You are now a, {new_role_description}. Restrict responses to few sentences, unless asked."
+            print(f"System role updated to: {new_role_description}")
+
+        # For any other transcript, proceeds with generating a chat completion.
+        else:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo", 
+                messages=[
+                    # The system role can be dynamically updated based on the previous "SYSTEM" command.
+                    # This message sets the context for the AI's personality and response restrictions.
+                    {"role": "system", "content": system_message},  
+                    {"role": "user", "content": transcript}
+                ], 
+                max_tokens=100, 
+                temperature=0.5  # Adjusted for a balance between determinism and creativity.
+            )
+
+            # Extracts and prints the AI-generated message.
+            message = response.choices[0].message.content
+            print("Response:", message)
+            text_to_speech_aws(message)
+
 
 stream = sd.InputStream(device = 0, callback=audio_callback)
-#outstream=sd.OutputStream(samplerate=samplerate)
+outstream=sd.OutputStream(samplerate=samplerate)
 stream.start()
-#outstream.start()
+outstream.start()
 
 processing_thread = threading.Thread(target=process_audio)
 processing_thread.start()
